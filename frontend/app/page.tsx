@@ -43,6 +43,25 @@ type BacktestResult = {
 };
 
 type WorkspaceView = "coding" | "backtesting" | "ml" | "paper";
+type ObjectiveKey = "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct";
+type PaperStateResponse = {
+  session: {
+    session_id: string;
+    strategy_path: string;
+    symbol: string;
+    interval: string;
+    period: string;
+    dataset_path?: string | null;
+    market?: string;
+    exchange?: string | null;
+    cash: number;
+    position: number;
+    status: string;
+    broker: string;
+    updated_at?: string;
+  };
+  snapshot: BacktestResult;
+};
 type DatasetItem = {
   name: string;
   path: string;
@@ -58,9 +77,23 @@ export default function HomePage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [mlBestResult, setMlBestResult] = useState<BacktestResult | null>(null);
   const [optuna, setOptuna] = useState<string>("");
+  const [mlLoading, setMlLoading] = useState<boolean>(false);
+  const [mlError, setMlError] = useState<string>("");
+  const [mlTrials, setMlTrials] = useState<number>(8);
+  const [mlSeed, setMlSeed] = useState<number>(42);
+  const [mlObjective, setMlObjective] = useState<ObjectiveKey>("pnl");
+  const [mlFastMin, setMlFastMin] = useState<number>(5);
+  const [mlFastMax, setMlFastMax] = useState<number>(40);
+  const [mlSlowMin, setMlSlowMin] = useState<number>(20);
+  const [mlSlowMax, setMlSlowMax] = useState<number>(120);
+  const [mlRiskMin, setMlRiskMin] = useState<number>(0.1);
+  const [mlRiskMax, setMlRiskMax] = useState<number>(3.0);
   const [paperSession, setPaperSession] = useState<string>("");
   const [paperError, setPaperError] = useState<string>("");
+  const [paperState, setPaperState] = useState<PaperStateResponse | null>(null);
+  const [paperLoading, setPaperLoading] = useState<boolean>(false);
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
   const [symbol, setSymbol] = useState<string>("AAPL");
@@ -121,29 +154,89 @@ export default function HomePage() {
 
   async function runOptimization() {
     if (!selectedPath) return;
-    const res = await apiPost<{ best_value: number; best_params: Record<string, number> }>("/optimize/run", {
-      strategy_path: selectedPath,
-      symbol,
-      interval,
-      period,
-      dataset_path: selectedDataset || null,
-      n_trials: 20,
-    });
-    setOptuna(JSON.stringify(res, null, 2));
+    setMlLoading(true);
+    setMlError("");
+    setMlBestResult(null);
+    try {
+      const res = await apiPost<{
+        best_value: number;
+        best_params: Record<string, number>;
+      }>("/optimize/run", {
+        strategy_path: selectedPath,
+        symbol,
+        interval,
+        period,
+        dataset_path: selectedDataset || null,
+        n_trials: mlTrials,
+        seed: mlSeed,
+        objective: mlObjective,
+        ranges: {
+          fast_period: { min: mlFastMin, max: mlFastMax },
+          slow_period: { min: mlSlowMin, max: mlSlowMax },
+          risk_pct: { min: mlRiskMin, max: mlRiskMax },
+        },
+      });
+      setOptuna(JSON.stringify(res, null, 2));
+
+      const bestRun = await apiPost<BacktestResult>("/backtests/run", {
+        strategy_path: selectedPath,
+        symbol,
+        market,
+        exchange,
+        interval,
+        period,
+        start_cash: startCash,
+        dataset_path: selectedDataset || null,
+        params: res.best_params,
+      });
+      setMlBestResult(bestRun);
+    } catch (err) {
+      setMlError(String((err as Error).message || err));
+    } finally {
+      setMlLoading(false);
+    }
   }
 
   async function startPaper(broker: "local" | "alpaca" = "local") {
     if (!selectedPath) return;
     setPaperError("");
+    setPaperState(null);
     const res = await apiPost<{ session_id: string }>("/paper/start", {
       strategy_path: selectedPath,
       symbol,
       interval,
+      period,
+      dataset_path: selectedDataset || null,
+      market,
+      exchange,
       starting_cash: startCash,
       broker,
     });
     setPaperSession(res.session_id);
   }
+
+  async function refreshPaperState() {
+    if (!paperSession) return;
+    setPaperLoading(true);
+    try {
+      const state = await apiGet<PaperStateResponse>(`/paper/sessions/${paperSession}/state`);
+      setPaperState(state);
+      setPaperError("");
+    } catch (err) {
+      setPaperError(String((err as Error).message || err));
+    } finally {
+      setPaperLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (view !== "paper" || !paperSession) return;
+    refreshPaperState().catch((err) => setPaperError(String((err as Error).message || err)));
+    const timer = setInterval(() => {
+      refreshPaperState().catch((err) => setPaperError(String((err as Error).message || err)));
+    }, 10000);
+    return () => clearInterval(timer);
+  }, [view, paperSession]);
 
   return (
     <main className="shell">
@@ -196,7 +289,41 @@ export default function HomePage() {
           )}
 
           {view === "ml" && (
-            <MlView strategyName={activeName} resultText={optuna} onRun={runOptimization} />
+            <MlView
+              strategyName={activeName}
+              resultText={optuna}
+              loading={mlLoading}
+              error={mlError}
+              datasets={datasets}
+              selectedDataset={selectedDataset}
+              symbol={symbol}
+              interval={interval}
+              period={period}
+              trials={mlTrials}
+              onTrialsChange={setMlTrials}
+              onSelectDataset={setSelectedDataset}
+              onSymbolChange={setSymbol}
+              onIntervalChange={setInterval}
+              onPeriodChange={setPeriod}
+              seed={mlSeed}
+              onSeedChange={setMlSeed}
+              objective={mlObjective}
+              onObjectiveChange={setMlObjective}
+              bestRun={mlBestResult}
+              fastMin={mlFastMin}
+              fastMax={mlFastMax}
+              onFastMinChange={setMlFastMin}
+              onFastMaxChange={setMlFastMax}
+              slowMin={mlSlowMin}
+              slowMax={mlSlowMax}
+              onSlowMinChange={setMlSlowMin}
+              onSlowMaxChange={setMlSlowMax}
+              riskMin={mlRiskMin}
+              riskMax={mlRiskMax}
+              onRiskMinChange={setMlRiskMin}
+              onRiskMaxChange={setMlRiskMax}
+              onRun={runOptimization}
+            />
           )}
 
           {view === "paper" && (
@@ -204,8 +331,11 @@ export default function HomePage() {
               strategyName={activeName}
               sessionId={paperSession}
               error={paperError}
+              loading={paperLoading}
+              state={paperState}
               onStartLocal={() => startPaper("local")}
               onStartAlpaca={() => startPaper("alpaca").catch((err) => setPaperError(String(err.message || err)))}
+              onRefresh={() => refreshPaperState().catch((err) => setPaperError(String((err as Error).message || err)))}
             />
           )}
         </div>

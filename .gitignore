@@ -10,5 +10,7 @@ node_modules/
 # Runtime artifacts
 *.log
 .DS_Store
+.env
+.env.local
 backend/data/datasets/*.csv
 backend/data/backtests/*.json

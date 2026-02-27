@@ -213,6 +213,11 @@ body {
   color: var(--fg-muted);
 }
 
+.error-text {
+  color: #ff8a9a;
+  font-size: 13px;
+}
+
 .btn-primary,
 .btn-secondary {
   border: none;
@@ -234,6 +239,11 @@ body {
 
 .btn-primary:hover {
   background: var(--accent-bright);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .btn-secondary {

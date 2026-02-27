@@ -61,6 +61,10 @@ def run_optimize(payload: OptimizeRequest) -> dict:
         return OptimizeService.run_optimization(payload.model_dump())
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Remote data provider error: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Optimization failed: {exc}")
 
 
 @router.post("/datasets/import")
@@ -103,6 +107,18 @@ def start_paper(payload: PaperTradeStartRequest) -> dict:
 @router.get("/paper/sessions")
 def list_paper_sessions() -> list[dict]:
     return PaperService.list_sessions()
+
+
+@router.get("/paper/sessions/{session_id}/state")
+def paper_session_state(session_id: str) -> dict:
+    try:
+        return PaperService.get_session_state(session_id)
+    except ValueError as exc:
+        message = str(exc)
+        status = 404 if "not found" in message.lower() else 400
+        raise HTTPException(status_code=status, detail=message)
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Remote data provider error: {exc}")
 
 
 @router.get("/paper/alpaca/account")

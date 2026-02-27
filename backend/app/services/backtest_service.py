@@ -185,7 +185,12 @@ class BacktestService:
         raise ValueError(f"Unsupported indicator type '{itype}'")
 
     @staticmethod
-    def _execute(payload: dict, persist: bool = True, params_override: dict | None = None) -> dict:
+    def _execute(
+        payload: dict,
+        persist: bool = True,
+        params_override: dict | None = None,
+        frame_override: pd.DataFrame | None = None,
+    ) -> dict:
         run_id = str(uuid4())
         base = float(payload.get("start_cash", 10000.0))
 
@@ -196,7 +201,7 @@ class BacktestService:
         if params_override:
             params.update(params_override)
 
-        frame = MarketDataService.get_ohlcv(payload)
+        frame = frame_override if frame_override is not None else MarketDataService.get_ohlcv(payload)
 
         cerebro = bt.Cerebro(stdstats=False)
         cerebro.broker.setcash(base)

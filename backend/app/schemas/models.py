@@ -47,6 +47,9 @@ class OptimizeRequest(BaseModel):
     period: str = "5d"
     n_trials: int = 20
     dataset_path: str | None = None
+    objective: str = "pnl"
+    seed: int | None = None
+    ranges: dict[str, dict[str, float]] | None = None
 
 
 class DatasetImportRequest(BaseModel):
@@ -62,5 +65,9 @@ class PaperTradeStartRequest(BaseModel):
     strategy_path: str
     symbol: str
     interval: str = "1m"
+    period: str = "7d"
+    dataset_path: str | None = None
+    market: str = "stocks"
+    exchange: str | None = None
     starting_cash: float = 10000.0
     broker: str = "local"
