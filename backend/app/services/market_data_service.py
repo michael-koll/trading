@@ -3,15 +3,100 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 import pandas as pd
+import requests
 import yfinance as yf
 
 from app.core.config import DATASETS_DIR
 from app.services.alpaca_service import AlpacaService
 
-ALLOWED_INTERVALS = {"1m", "5m"}
+ALLOWED_INTERVALS = {"1m", "5m", "15m", "1h", "1d"}
+POPULAR_SYMBOLS = [
+    {"symbol": "^GSPC", "name": "S&P 500", "type": "INDEX", "exchange": "INDEX"},
+    {"symbol": "^NDX", "name": "NASDAQ 100", "type": "INDEX", "exchange": "INDEX"},
+    {"symbol": "^IXIC", "name": "NASDAQ Composite", "type": "INDEX", "exchange": "INDEX"},
+    {"symbol": "^DJI", "name": "Dow Jones Industrial Average", "type": "INDEX", "exchange": "INDEX"},
+    {"symbol": "SPY", "name": "SPDR S&P 500 ETF", "type": "ETF", "exchange": "NYSEARCA"},
+    {"symbol": "QQQ", "name": "Invesco QQQ Trust", "type": "ETF", "exchange": "NASDAQ"},
+    {"symbol": "AAPL", "name": "Apple Inc.", "type": "EQUITY", "exchange": "NASDAQ"},
+    {"symbol": "MSFT", "name": "Microsoft Corporation", "type": "EQUITY", "exchange": "NASDAQ"},
+    {"symbol": "NVDA", "name": "NVIDIA Corporation", "type": "EQUITY", "exchange": "NASDAQ"},
+    {"symbol": "TSLA", "name": "Tesla, Inc.", "type": "EQUITY", "exchange": "NASDAQ"},
+    {"symbol": "BTC-USD", "name": "Bitcoin USD", "type": "CRYPTO", "exchange": "CCC"},
+    {"symbol": "ETH-USD", "name": "Ethereum USD", "type": "CRYPTO", "exchange": "CCC"},
+    {"symbol": "SOL-USD", "name": "Solana USD", "type": "CRYPTO", "exchange": "CCC"},
+]
 
 
 class MarketDataService:
+    @staticmethod
+    def _fallback_symbol_search(query: str, limit: int) -> list[dict]:
+        q = query.lower().strip()
+        ranked: list[dict] = []
+        for item in POPULAR_SYMBOLS:
+            symbol = str(item.get("symbol", ""))
+            name = str(item.get("name", ""))
+            hay = f"{symbol} {name}".lower()
+            if q in hay:
+                ranked.append(item)
+        return ranked[:limit]
+
+    @staticmethod
+    def search_symbols(query: str, limit: int = 8) -> list[dict]:
+        q = (query or "").strip()
+        if len(q) < 1:
+            return []
+        safe_limit = max(1, min(int(limit), 20))
+
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        try:
+            response = requests.get(
+                "https://query1.finance.yahoo.com/v1/finance/search",
+                params={
+                    "q": q,
+                    "quotesCount": safe_limit,
+                    "newsCount": 0,
+                },
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json,text/plain,*/*",
+                },
+                timeout=8,
+            )
+            response.raise_for_status()
+            payload = response.json() or {}
+            quotes = payload.get("quotes", []) or []
+
+            for item in quotes:
+                symbol = str(item.get("symbol") or "").strip()
+                if not symbol or symbol in seen:
+                    continue
+                seen.add(symbol)
+                out.append(
+                    {
+                        "symbol": symbol,
+                        "name": str(item.get("shortname") or item.get("longname") or symbol),
+                        "type": str(item.get("quoteType") or ""),
+                        "exchange": str(item.get("exchDisp") or item.get("exchange") or ""),
+                    }
+                )
+                if len(out) >= safe_limit:
+                    return out
+        except requests.RequestException:
+            pass
+
+        for item in MarketDataService._fallback_symbol_search(q, safe_limit):
+            symbol = str(item.get("symbol") or "").strip()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            out.append(item)
+            if len(out) >= safe_limit:
+                break
+
+        return out
+
     @staticmethod
     def list_datasets() -> list[dict]:
         items: list[dict] = []
@@ -144,7 +229,7 @@ class MarketDataService:
     def get_ohlcv(payload: dict) -> pd.DataFrame:
         interval = payload.get("interval", "1m")
         if interval not in ALLOWED_INTERVALS:
-            raise ValueError("Supported intervals: 1m, 5m")
+            raise ValueError("Supported intervals: 1m, 5m, 15m, 1h, 1d")
 
         dataset_path = payload.get("dataset_path")
         if dataset_path:

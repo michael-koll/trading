@@ -1,7 +1,9 @@
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { ChartPane } from "@/components/ChartPane";
 import { TradeChartPane } from "@/components/TradeChartPane";
+import { apiGet } from "@/lib/api";
 
 type DatasetItem = {
   name: string;
@@ -69,6 +71,29 @@ type BacktestingViewProps = {
   onStartCashChange: (value: number) => void;
   onRun: () => void;
 };
+
+type SymbolSearchItem = {
+  symbol: string;
+  name: string;
+  type: string;
+  exchange: string;
+};
+
+const PERIOD_OPTIONS = [
+  { value: "7d", label: "7 Days" },
+  { value: "30d", label: "30 Days" },
+  { value: "60d", label: "60 Days" },
+  { value: "6mo", label: "6 Months" },
+  { value: "1y", label: "1 Year" },
+];
+
+const INTERVAL_OPTIONS = [
+  { value: "1m", label: "1 Minute" },
+  { value: "5m", label: "5 Minutes" },
+  { value: "15m", label: "15 Minutes" },
+  { value: "1h", label: "1 Hour" },
+  { value: "1d", label: "1 Day" },
+];
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || Number.isNaN(v as number)) return "-";
@@ -152,6 +177,33 @@ export function BacktestingView({
 }: BacktestingViewProps) {
   const context = result?.context;
   const analytics = result?.analytics;
+  const [symbolQuery, setSymbolQuery] = useState(symbol);
+  const [symbolResults, setSymbolResults] = useState<SymbolSearchItem[]>([]);
+  const [symbolOpen, setSymbolOpen] = useState(false);
+  const [symbolLoading, setSymbolLoading] = useState(false);
+
+  useEffect(() => {
+    setSymbolQuery(symbol);
+  }, [symbol]);
+
+  const trimmedQuery = useMemo(() => symbolQuery.trim(), [symbolQuery]);
+
+  useEffect(() => {
+    if (trimmedQuery.length < 1) {
+      setSymbolResults([]);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setSymbolLoading(true);
+      apiGet<SymbolSearchItem[]>(`/symbols/search?q=${encodeURIComponent(trimmedQuery)}&limit=8`)
+        .then((items) => setSymbolResults(items))
+        .catch(() => setSymbolResults([]))
+        .finally(() => setSymbolLoading(false));
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [trimmedQuery]);
 
   return (
     <section className="card panel backtest-view">
@@ -166,39 +218,116 @@ export function BacktestingView({
       <div className="backtest-controls">
         <label>
           <span>Dataset</span>
-          <select value={selectedDataset} onChange={(e) => onSelectDataset(e.target.value)}>
-            <option value="">Live source (yfinance)</option>
-            {datasets.map((d) => (
-              <option key={d.path} value={d.path}>{d.name}</option>
-            ))}
-          </select>
+          <div className="select-wrap select-modern">
+            <select value={selectedDataset} onChange={(e) => onSelectDataset(e.target.value)}>
+              <option value="">Live source (yfinance)</option>
+              {datasets.map((d) => (
+                <option key={d.path} value={d.path}>{d.name}</option>
+              ))}
+            </select>
+            <span className="select-chevron" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M5.5 7.5L10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </div>
         </label>
         <label>
           <span>Symbol / Pair</span>
-          <input value={symbol} onChange={(e) => onSymbolChange(e.target.value)} placeholder="AAPL / BTC-USD" />
+          <div className="symbol-search">
+            <input
+              className="input-modern"
+              value={symbolQuery}
+              onFocus={() => setSymbolOpen(true)}
+              onBlur={() => setTimeout(() => setSymbolOpen(false), 120)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setSymbolQuery(value);
+                onSymbolChange(value);
+              }}
+              placeholder="Search symbol (e.g. AAPL, BTC-USD, ^GSPC)"
+            />
+            {symbolOpen && (symbolLoading || symbolResults.length > 0 || trimmedQuery.length > 0) && (
+              <div className="symbol-results">
+                {symbolLoading && <div className="symbol-results-hint">Searching...</div>}
+                {!symbolLoading && symbolResults.length === 0 && (
+                  <div className="symbol-results-hint">No results for "{trimmedQuery}"</div>
+                )}
+                {symbolResults.map((item) => (
+                  <button
+                    key={`${item.symbol}-${item.exchange}`}
+                    type="button"
+                    className="symbol-result-item"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setSymbolQuery(item.symbol);
+                      onSymbolChange(item.symbol);
+                      setSymbolOpen(false);
+                    }}
+                  >
+                    <span className="symbol-main">
+                      <strong>{item.symbol}</strong>
+                      <em>{item.name}</em>
+                    </span>
+                    <span className="symbol-meta">{[item.type, item.exchange].filter(Boolean).join(" · ")}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </label>
         <label>
           <span>Market</span>
-          <input value={market} onChange={(e) => onMarketChange(e.target.value)} placeholder="stocks / crypto" />
+          <input
+            className="input-modern"
+            value={market}
+            onChange={(e) => onMarketChange(e.target.value)}
+            placeholder="stocks / crypto"
+          />
         </label>
         <label>
           <span>Exchange</span>
-          <input value={exchange} onChange={(e) => onExchangeChange(e.target.value)} placeholder="NASDAQ / BINANCE" />
+          <input
+            className="input-modern"
+            value={exchange}
+            onChange={(e) => onExchangeChange(e.target.value)}
+            placeholder="NASDAQ / BINANCE"
+          />
         </label>
         <label>
           <span>Interval</span>
-          <select value={interval} onChange={(e) => onIntervalChange(e.target.value)}>
-            <option value="1m">1m</option>
-            <option value="5m">5m</option>
-          </select>
+          <div className="select-wrap select-modern">
+            <select value={interval} onChange={(e) => onIntervalChange(e.target.value)}>
+              {INTERVAL_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <span className="select-chevron" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M5.5 7.5L10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </div>
         </label>
         <label>
           <span>Period</span>
-          <input value={period} onChange={(e) => onPeriodChange(e.target.value)} placeholder="5d" />
+          <div className="select-wrap select-modern">
+            <select value={period} onChange={(e) => onPeriodChange(e.target.value)}>
+              {PERIOD_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+            <span className="select-chevron" aria-hidden="true">
+              <svg viewBox="0 0 20 20" fill="none">
+                <path d="M5.5 7.5L10 12l4.5-4.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
+          </div>
         </label>
         <label>
           <span>Start Cash</span>
           <input
+            className="input-modern"
             type="number"
             value={startCash}
             onChange={(e) => onStartCashChange(Number(e.target.value || 0))}

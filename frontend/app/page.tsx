@@ -67,7 +67,7 @@ export default function HomePage() {
   const [market, setMarket] = useState<string>("stocks");
   const [exchange, setExchange] = useState<string>("NASDAQ");
   const [interval, setInterval] = useState<string>("1m");
-  const [period, setPeriod] = useState<string>("5d");
+  const [period, setPeriod] = useState<string>("7d");
   const [startCash, setStartCash] = useState<number>(10000);
 
   async function reloadStrategies() {
@@ -96,6 +96,7 @@ export default function HomePage() {
   }, [view]);
 
   const activeName = selectedPath || "Select strategy";
+  const activeFileName = selectedPath ? selectedPath.split("/").pop() || selectedPath : "no_strategy.py";
 
   async function saveStrategy() {
     if (!selectedPath) return;
@@ -160,6 +161,10 @@ export default function HomePage() {
             <button className={view === "ml" ? "active" : ""} onClick={() => setView("ml")}>ML Optimization</button>
             <button className={view === "paper" ? "active" : ""} onClick={() => setView("paper")}>Live Paper Trading</button>
           </nav>
+          <div className="taskbar-strategy" title={activeName}>
+            <span className="taskbar-strategy-label">Strategy</span>
+            <strong>{activeFileName}</strong>
+          </div>
         </header>
 
         <div className="view-stage">

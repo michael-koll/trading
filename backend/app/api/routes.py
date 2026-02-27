@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 import requests
 from app.schemas.models import (
     BacktestRequest,
@@ -12,6 +12,7 @@ from app.services.dataset_service import DatasetService
 from app.services.file_service import FileService
 from app.services.optimize_service import OptimizeService
 from app.services.paper_service import PaperService
+from app.services.market_data_service import MarketDataService
 
 router = APIRouter(prefix="/api")
 
@@ -77,6 +78,16 @@ def import_dataset(payload: DatasetImportRequest) -> dict:
 @router.get("/datasets")
 def list_datasets() -> list[dict]:
     return DatasetService.list_datasets()
+
+
+@router.get("/symbols/search")
+def search_symbols(q: str = Query(default="", min_length=1), limit: int = 8) -> list[dict]:
+    try:
+        return MarketDataService.search_symbols(q, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Remote data provider error: {exc}")
 
 
 @router.post("/paper/start")
