@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+node_modules/
+.next/
+
+# Runtime artifacts
+*.log
+.DS_Store
+backend/data/datasets/*.csv
+backend/data/backtests/*.json
