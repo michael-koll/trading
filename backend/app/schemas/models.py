@@ -13,6 +13,19 @@ class SaveStrategyRequest(BaseModel):
     content: str
 
 
+class CreateStrategyRequest(BaseModel):
+    path: str = "new_strategy.py"
+
+
+class RenameStrategyRequest(BaseModel):
+    old_path: str = Field(min_length=1)
+    new_path: str = Field(min_length=1)
+
+
+class DeleteStrategyRequest(BaseModel):
+    path: str = Field(min_length=1)
+
+
 class BacktestRequest(BaseModel):
     strategy_path: str
     symbol: str = "AAPL"

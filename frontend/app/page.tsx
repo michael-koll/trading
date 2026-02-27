@@ -106,7 +106,11 @@ export default function HomePage() {
   async function reloadStrategies() {
     const files = await apiGet<Strategy[]>("/strategies");
     setStrategies(files);
-    if (!selectedPath && files.length > 0) {
+    if (files.length === 0) {
+      setSelectedPath(null);
+      return;
+    }
+    if (!selectedPath || !files.some((f) => f.path === selectedPath)) {
       setSelectedPath(files[0].path);
     }
   }
@@ -134,6 +138,22 @@ export default function HomePage() {
   async function saveStrategy() {
     if (!selectedPath) return;
     await apiPost("/strategies", { path: selectedPath, content: code });
+    await reloadStrategies();
+  }
+
+  async function createStrategy(): Promise<string> {
+    const res = await apiPost<{ path: string }>("/strategies/create", { path: "new_strategy.py" });
+    await reloadStrategies();
+    return res.path;
+  }
+
+  async function renameStrategy(oldPath: string, newPath: string) {
+    await apiPost("/strategies/rename", { old_path: oldPath, new_path: newPath });
+    await reloadStrategies();
+  }
+
+  async function deleteStrategy(path: string) {
+    await apiPost("/strategies/delete", { path });
     await reloadStrategies();
   }
 
@@ -244,7 +264,14 @@ export default function HomePage() {
       <div className="ambient ambient-b" />
       <div className="ambient ambient-c" />
 
-      <Sidebar strategies={strategies} selectedPath={selectedPath} onSelect={setSelectedPath} />
+      <Sidebar
+        strategies={strategies}
+        selectedPath={selectedPath}
+        onSelect={setSelectedPath}
+        onCreate={createStrategy}
+        onRename={renameStrategy}
+        onDelete={deleteStrategy}
+      />
 
       <section className="content">
         <header className="taskbar">

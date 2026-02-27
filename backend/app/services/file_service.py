@@ -4,6 +4,30 @@ from app.core.config import STRATEGIES_DIR
 
 
 class FileService:
+    DEFAULT_TEMPLATE = '''"""New strategy."""
+
+PARAMS = {
+    "fast_period": 10,
+    "slow_period": 30,
+    "risk_pct": 1.0,
+}
+
+
+def describe() -> dict:
+    return {
+        "name": "New Strategy",
+        "description": "Describe your strategy here.",
+        "params": PARAMS,
+    }
+'''
+
+    @staticmethod
+    def _resolve_strategy_path(rel_path: str) -> Path:
+        path = (STRATEGIES_DIR / rel_path).resolve()
+        if not str(path).startswith(str(STRATEGIES_DIR.resolve())):
+            raise ValueError("Invalid path")
+        return path
+
     @staticmethod
     def list_strategies() -> list[dict]:
         items: list[dict] = []
@@ -20,17 +44,64 @@ class FileService:
 
     @staticmethod
     def read_strategy(rel_path: str) -> str:
-        path = (STRATEGIES_DIR / rel_path).resolve()
-        if not str(path).startswith(str(STRATEGIES_DIR.resolve())):
-            raise ValueError("Invalid path")
+        path = FileService._resolve_strategy_path(rel_path)
         if not path.exists():
             raise FileNotFoundError(rel_path)
         return path.read_text(encoding="utf-8")
 
     @staticmethod
     def save_strategy(rel_path: str, content: str) -> None:
-        path = (STRATEGIES_DIR / rel_path).resolve()
-        if not str(path).startswith(str(STRATEGIES_DIR.resolve())):
-            raise ValueError("Invalid path")
+        path = FileService._resolve_strategy_path(rel_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    @staticmethod
+    def create_strategy(rel_path: str = "new_strategy.py") -> str:
+        base_rel = (rel_path or "new_strategy.py").strip()
+        if not base_rel:
+            base_rel = "new_strategy.py"
+        if not base_rel.endswith(".py"):
+            base_rel = f"{base_rel}.py"
+
+        base_path = FileService._resolve_strategy_path(base_rel)
+        if base_path.suffix != ".py":
+            raise ValueError("Strategy file must use .py extension")
+
+        candidate = base_path
+        if candidate.exists():
+            stem = candidate.stem
+            suffix = candidate.suffix
+            parent = candidate.parent
+            i = 1
+            while True:
+                numbered = parent / f"{stem}{i}{suffix}"
+                if not numbered.exists():
+                    candidate = numbered
+                    break
+                i += 1
+
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        candidate.write_text(FileService.DEFAULT_TEMPLATE, encoding="utf-8")
+        return str(candidate.relative_to(STRATEGIES_DIR))
+
+    @staticmethod
+    def rename_strategy(old_rel_path: str, new_rel_path: str) -> None:
+        old_path = FileService._resolve_strategy_path(old_rel_path)
+        new_path = FileService._resolve_strategy_path(new_rel_path)
+        if old_path.suffix != ".py" or new_path.suffix != ".py":
+            raise ValueError("Strategy files must use .py extension")
+        if not old_path.exists():
+            raise FileNotFoundError(old_rel_path)
+        if new_path.exists():
+            raise ValueError("Target strategy file already exists")
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        old_path.rename(new_path)
+
+    @staticmethod
+    def delete_strategy(rel_path: str) -> None:
+        path = FileService._resolve_strategy_path(rel_path)
+        if path.suffix != ".py":
+            raise ValueError("Strategy file must use .py extension")
+        if not path.exists():
+            raise FileNotFoundError(rel_path)
+        path.unlink()

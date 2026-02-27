@@ -142,6 +142,29 @@ body {
   font-size: 18px;
 }
 
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar-plus {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 106, 210, 0.35);
+  background: rgba(94, 106, 210, 0.18);
+  color: #d7ddff;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sidebar-plus:hover {
+  background: rgba(94, 106, 210, 0.28);
+}
+
 .file-list {
   display: flex;
   flex-direction: column;
@@ -149,9 +172,64 @@ body {
   overflow: auto;
 }
 
+.sidebar-block {
+  min-height: 0;
+  padding-right: 2px;
+}
+
+.sidebar-block-favorites {
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible;
+}
+
+.sidebar-block-main {
+  flex: 1 1 auto;
+}
+
+.file-item-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+}
+
+.file-item-row .file-delete {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-item-row:hover .file-delete,
+.file-item-row:focus-within .file-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.file-star {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #8a8f98;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.file-star:hover {
+  color: #f4c15d;
+}
+
+.file-star.active {
+  color: #f4c15d;
+  border-color: rgba(244, 193, 93, 0.45);
+  background: rgba(244, 193, 93, 0.13);
+}
+
 .file-item {
+  flex: 1 1 auto;
   text-align: left;
-  padding: 10px;
+  padding: 10px 34px 10px 10px;
   border-radius: 10px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.02);
@@ -164,6 +242,34 @@ body {
 .file-item.active {
   border-color: rgba(94, 106, 210, 0.4);
   background: rgba(94, 106, 210, 0.16);
+}
+
+.file-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+}
+
+.file-delete {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(208, 92, 112, 0.55);
+  background: rgba(208, 92, 112, 0.14);
+  color: #ff8a9a;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: opacity 160ms var(--expo), background-color 160ms var(--expo);
+  z-index: 2;
+}
+
+.file-delete:hover {
+  background: rgba(208, 92, 112, 0.28);
 }
 
 .sidebar-footer {

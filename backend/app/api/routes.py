@@ -2,9 +2,12 @@ from fastapi import APIRouter, HTTPException, Query
 import requests
 from app.schemas.models import (
     BacktestRequest,
+    CreateStrategyRequest,
+    DeleteStrategyRequest,
     DatasetImportRequest,
     OptimizeRequest,
     PaperTradeStartRequest,
+    RenameStrategyRequest,
     SaveStrategyRequest,
 )
 from app.services.backtest_service import BacktestService
@@ -43,6 +46,39 @@ def save_strategy(payload: SaveStrategyRequest) -> dict:
     try:
         FileService.save_strategy(payload.path, payload.content)
         return {"status": "saved", "path": payload.path}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/strategies/create")
+def create_strategy(payload: CreateStrategyRequest) -> dict:
+    try:
+        created = FileService.create_strategy(payload.path)
+        return {"status": "created", "path": created}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/strategies/rename")
+def rename_strategy(payload: RenameStrategyRequest) -> dict:
+    try:
+        FileService.rename_strategy(payload.old_path, payload.new_path)
+        return {"status": "renamed", "old_path": payload.old_path, "new_path": payload.new_path}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/strategies/delete")
+def delete_strategy(payload: DeleteStrategyRequest) -> dict:
+    try:
+        FileService.delete_strategy(payload.path)
+        return {"status": "deleted", "path": payload.path}
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Strategy not found")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
