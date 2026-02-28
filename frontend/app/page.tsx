@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiGet, apiPost } from "@/lib/api";
 import { Sidebar, Strategy } from "@/components/Sidebar";
 import { CodingView } from "@/components/views/CodingView";
@@ -57,6 +57,7 @@ type MlSessionCache = {
   bestRun: BacktestResult | null;
   error: string;
   ranges: Record<string, MlRange>;
+  bestParams: Record<string, number> | null;
 };
 type PaperStateResponse = {
   session: {
@@ -96,11 +97,17 @@ export default function HomePage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [codeByStrategy, setCodeByStrategy] = useState<Record<string, string>>({});
+  const [persistedCodeByStrategy, setPersistedCodeByStrategy] = useState<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveRequestIdRef = useRef(0);
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [backtestLoading, setBacktestLoading] = useState<boolean>(false);
   const [backtestByStrategy, setBacktestByStrategy] = useState<Record<string, BacktestResult>>({});
   const [paramSpecsByStrategy, setParamSpecsByStrategy] = useState<Record<string, StrategyParamSpec[]>>({});
   const [mlByStrategy, setMlByStrategy] = useState<Record<string, MlSessionCache>>({});
   const [mlBestResult, setMlBestResult] = useState<BacktestResult | null>(null);
+  const [mlBestParams, setMlBestParams] = useState<Record<string, number> | null>(null);
   const [optuna, setOptuna] = useState<string>("");
   const [mlLoading, setMlLoading] = useState<boolean>(false);
   const [mlError, setMlError] = useState<string>("");
@@ -140,6 +147,46 @@ export default function HomePage() {
     apiGet<DatasetItem[]>("/datasets").then(setDatasets).catch(console.error);
   }, []);
 
+  const clearSaveStatusTimer = useCallback(() => {
+    if (!saveStatusTimerRef.current) return;
+    clearTimeout(saveStatusTimerRef.current);
+    saveStatusTimerRef.current = null;
+  }, []);
+
+  const beginSaveStatus = useCallback(() => {
+    clearSaveStatusTimer();
+    const requestId = saveRequestIdRef.current + 1;
+    saveRequestIdRef.current = requestId;
+    setSaveState("saving");
+    return requestId;
+  }, [clearSaveStatusTimer]);
+
+  const markSaveSuccess = useCallback((requestId: number) => {
+    if (saveRequestIdRef.current !== requestId) return;
+    setSaveState("saved");
+    clearSaveStatusTimer();
+    saveStatusTimerRef.current = setTimeout(() => {
+      if (saveRequestIdRef.current !== requestId) return;
+      setSaveState("idle");
+      saveStatusTimerRef.current = null;
+    }, 900);
+  }, [clearSaveStatusTimer]);
+
+  const markSaveError = useCallback((requestId: number) => {
+    if (saveRequestIdRef.current !== requestId) return;
+    setSaveState("error");
+    clearSaveStatusTimer();
+    saveStatusTimerRef.current = setTimeout(() => {
+      if (saveRequestIdRef.current !== requestId) return;
+      setSaveState("idle");
+      saveStatusTimerRef.current = null;
+    }, 1400);
+  }, [clearSaveStatusTimer]);
+
+  useEffect(() => {
+    return () => clearSaveStatusTimer();
+  }, [clearSaveStatusTimer]);
+
   useEffect(() => {
     if (!selectedPath) return;
     let active = true;
@@ -147,6 +194,7 @@ export default function HomePage() {
     setResult(backtestByStrategy[selectedPath] || null);
     const mlCached = mlByStrategy[selectedPath];
     setMlBestResult(mlCached?.bestRun || null);
+    setMlBestParams(mlCached?.bestParams || null);
     setOptuna(mlCached?.resultText || "");
     setMlError(mlCached?.error || "");
     setMlRanges(mlCached?.ranges || {});
@@ -157,12 +205,16 @@ export default function HomePage() {
     const cachedCode = codeByStrategy[selectedPath];
     if (cachedCode !== undefined) {
       setCode(cachedCode);
+      setPersistedCodeByStrategy((prev) =>
+        prev[selectedPath] === undefined ? { ...prev, [selectedPath]: cachedCode } : prev
+      );
     } else {
       apiGet<{ content: string }>(`/strategies/${selectedPath}`)
         .then((res) => {
           if (!active) return;
           setCode(res.content);
           setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: res.content }));
+          setPersistedCodeByStrategy((prev) => ({ ...prev, [selectedPath]: res.content }));
         })
         .catch(console.error);
     }
@@ -219,41 +271,72 @@ export default function HomePage() {
     apiGet<DatasetItem[]>("/datasets").then(setDatasets).catch(console.error);
   }, [view]);
 
+  const persistedCode = selectedPath ? persistedCodeByStrategy[selectedPath] : undefined;
+
+  useEffect(() => {
+    if (!selectedPath) return;
+    if (persistedCode === undefined || code === persistedCode) return;
+    const path = selectedPath;
+    const content = code;
+    const timer = setTimeout(() => {
+      const requestId = beginSaveStatus();
+      apiPost("/strategies", { path, content })
+        .then(() => {
+          setPersistedCodeByStrategy((prev) => ({ ...prev, [path]: content }));
+          markSaveSuccess(requestId);
+        })
+        .catch((err) => {
+          console.error(err);
+          markSaveError(requestId);
+        });
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [selectedPath, code, persistedCode, beginSaveStatus, markSaveError, markSaveSuccess]);
+
   const activeName = selectedPath || "Select strategy";
   const activeFileName = selectedPath ? selectedPath.split("/").pop() || selectedPath : "no_strategy.py";
 
   async function saveStrategy() {
     if (!selectedPath) return;
-    await apiPost("/strategies", { path: selectedPath, content: code });
-    setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: code }));
-    const meta = await apiGet<{ params: StrategyParamSpec[] }>(`/strategy-params/${selectedPath}`);
-    const params = Array.isArray(meta.params) ? meta.params : [];
-    setMlParamSpecs(params);
-    setParamSpecsByStrategy((prev) => ({ ...prev, [selectedPath]: params }));
-    const resetRanges = params.reduce<Record<string, MlRange>>((acc, p) => {
-      acc[p.name] = {
-        min: Number(p.suggested_min),
-        max: Number(p.suggested_max),
-        type: p.type,
-      };
-      return acc;
-    }, {});
-    setMlRanges(resetRanges);
-    setMlByStrategy((prev) => ({
-      ...prev,
-      [selectedPath]: {
-        resultText: "",
-        bestRun: null,
-        error: "",
-        ranges: resetRanges,
-      },
-    }));
-    setBacktestByStrategy((prev) => {
-      const out = { ...prev };
-      delete out[selectedPath];
-      return out;
-    });
-    await reloadStrategies();
+    const requestId = beginSaveStatus();
+    try {
+      await apiPost("/strategies", { path: selectedPath, content: code });
+      setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: code }));
+      setPersistedCodeByStrategy((prev) => ({ ...prev, [selectedPath]: code }));
+      const meta = await apiGet<{ params: StrategyParamSpec[] }>(`/strategy-params/${selectedPath}`);
+      const params = Array.isArray(meta.params) ? meta.params : [];
+      setMlParamSpecs(params);
+      setParamSpecsByStrategy((prev) => ({ ...prev, [selectedPath]: params }));
+      const resetRanges = params.reduce<Record<string, MlRange>>((acc, p) => {
+        acc[p.name] = {
+          min: Number(p.suggested_min),
+          max: Number(p.suggested_max),
+          type: p.type,
+        };
+        return acc;
+      }, {});
+      setMlRanges(resetRanges);
+      setMlByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          resultText: "",
+          bestRun: null,
+          error: "",
+          ranges: resetRanges,
+          bestParams: null,
+        },
+      }));
+      setBacktestByStrategy((prev) => {
+        const out = { ...prev };
+        delete out[selectedPath];
+        return out;
+      });
+      await reloadStrategies();
+      markSaveSuccess(requestId);
+    } catch (err) {
+      console.error(err);
+      markSaveError(requestId);
+    }
   }
 
   async function createStrategy(): Promise<string> {
@@ -265,6 +348,12 @@ export default function HomePage() {
   async function renameStrategy(oldPath: string, newPath: string) {
     await apiPost("/strategies/rename", { old_path: oldPath, new_path: newPath });
     setCodeByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
+    setPersistedCodeByStrategy((prev) => {
       if (!(oldPath in prev)) return prev;
       const out = { ...prev, [newPath]: prev[oldPath] };
       delete out[oldPath];
@@ -305,6 +394,12 @@ export default function HomePage() {
       delete out[path];
       return out;
     });
+    setPersistedCodeByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
     setParamSpecsByStrategy((prev) => {
       if (!(path in prev)) return prev;
       const out = { ...prev };
@@ -334,18 +429,23 @@ export default function HomePage() {
 
   async function runBacktest() {
     if (!selectedPath) return;
-    const backtest = await apiPost<BacktestResult>("/backtests/run", {
-      strategy_path: selectedPath,
-      symbol,
-      market,
-      exchange,
-      interval,
-      period,
-      start_cash: startCash,
-      dataset_path: selectedDataset || null,
-    });
-    setResult(backtest);
-    setBacktestByStrategy((prev) => ({ ...prev, [selectedPath]: backtest }));
+    setBacktestLoading(true);
+    try {
+      const backtest = await apiPost<BacktestResult>("/backtests/run", {
+        strategy_path: selectedPath,
+        symbol,
+        market,
+        exchange,
+        interval,
+        period,
+        start_cash: startCash,
+        dataset_path: selectedDataset || null,
+      });
+      setResult(backtest);
+      setBacktestByStrategy((prev) => ({ ...prev, [selectedPath]: backtest }));
+    } finally {
+      setBacktestLoading(false);
+    }
   }
 
   async function runOptimization() {
@@ -366,6 +466,7 @@ export default function HomePage() {
           bestRun: mlBestResult,
           error: "No numeric params found in strategy `params`.",
           ranges: mlRanges,
+          bestParams: mlBestParams,
         },
       }));
       return;
@@ -374,6 +475,7 @@ export default function HomePage() {
     setMlLoading(true);
     setMlError("");
     setMlBestResult(null);
+    setMlBestParams(null);
     try {
       const res = await apiPost<{
         best_value: number;
@@ -391,6 +493,7 @@ export default function HomePage() {
       });
       const resultText = JSON.stringify(res, null, 2);
       setOptuna(resultText);
+      setMlBestParams(res.best_params || null);
 
       const bestRun = await apiPost<BacktestResult>("/backtests/run", {
         strategy_path: selectedPath,
@@ -411,6 +514,7 @@ export default function HomePage() {
           bestRun,
           error: "",
           ranges: mlRanges,
+          bestParams: res.best_params || null,
         },
       }));
     } catch (err) {
@@ -423,6 +527,7 @@ export default function HomePage() {
           bestRun: mlBestResult,
           error: msg,
           ranges: mlRanges,
+          bestParams: mlBestParams,
         },
       }));
     } finally {
@@ -530,6 +635,7 @@ export default function HomePage() {
             <CodingView
               title={activeName}
               code={code}
+              saveState={saveState}
               onChange={(next) => {
                 setCode(next);
                 if (!selectedPath) return;
@@ -551,6 +657,7 @@ export default function HomePage() {
               interval={interval}
               period={period}
               startCash={startCash}
+              loading={backtestLoading}
               onSelectDataset={setSelectedDataset}
               onSymbolChange={setSymbol}
               onMarketChange={setMarket}
@@ -586,6 +693,7 @@ export default function HomePage() {
               bestRun={mlBestResult}
               paramSpecs={mlParamSpecs}
               paramRanges={mlRanges}
+              optimizedParams={mlBestParams}
               onParamRangeChange={(name, field, value) => {
                 if (!selectedPath) return;
                 setMlRanges((prev) => {
@@ -610,6 +718,7 @@ export default function HomePage() {
                       bestRun: cache[selectedPath]?.bestRun || mlBestResult,
                       error: cache[selectedPath]?.error || mlError,
                       ranges: next,
+                      bestParams: cache[selectedPath]?.bestParams || mlBestParams,
                     },
                   }));
                   return next;

@@ -62,6 +62,7 @@ type BacktestingViewProps = {
   interval: string;
   period: string;
   startCash: number;
+  loading: boolean;
   onSelectDataset: (value: string) => void;
   onSymbolChange: (value: string) => void;
   onMarketChange: (value: string) => void;
@@ -166,6 +167,7 @@ export function BacktestingView({
   interval,
   period,
   startCash,
+  loading,
   onSelectDataset,
   onSymbolChange,
   onMarketChange,
@@ -212,7 +214,25 @@ export function BacktestingView({
           <div className="section-label">BACKTESTING VIEW</div>
           <h3>Backtest Runner</h3>
         </div>
-        <button className="btn-primary" onClick={onRun}>Run Backtest</button>
+        <button
+          className="btn-primary icon-action-btn"
+          onClick={onRun}
+          disabled={loading}
+          aria-label={loading ? "Running backtest" : "Run backtest"}
+          title={loading ? "Running backtest" : "Run backtest"}
+        >
+          {loading ? (
+            <span className="loading-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M8 6L18 12L8 18V6Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            </svg>
+          )}
+        </button>
       </div>
 
       <div className="backtest-controls">

@@ -142,12 +142,7 @@ class BacktestService:
 
     @staticmethod
     def _resolve_strategy_class(strategy_module: object) -> type[bt.Strategy]:
-        # Preferred explicit export for strategy scripts.
-        explicit = getattr(strategy_module, "Strategy", None)
-        if isclass(explicit) and issubclass(explicit, bt.Strategy):
-            return explicit
-
-        # Fallback: first bt.Strategy subclass declared in this module.
+        # First bt.Strategy subclass declared in this module.
         module_name = getattr(strategy_module, "__name__", "")
         for candidate in vars(strategy_module).values():
             if (
@@ -160,7 +155,7 @@ class BacktestService:
 
         raise ValueError(
             "Strategy module must define a Backtrader strategy class. "
-            "Add `class Strategy(bt.Strategy): ...` to the script."
+            "Add `class MyStrategy(bt.Strategy): ...` to the script."
         )
 
     @staticmethod

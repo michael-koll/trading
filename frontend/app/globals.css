@@ -390,6 +390,49 @@ body {
   margin: 0;
 }
 
+.icon-action-btn {
+  min-width: 44px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loading-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.35;
+  animation: loading-dot-pulse 0.9s ease-in-out infinite;
+}
+
+.loading-dots span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.loading-dots span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes loading-dot-pulse {
+  0%,
+  100% {
+    transform: scale(0.8);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+}
+
 .taskbar {
   display: flex;
   justify-content: flex-start;
@@ -574,6 +617,78 @@ body {
 .backtest-controls select option {
   background: #0a0a0c;
   color: var(--fg);
+}
+
+.ml-param-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.ml-param-card {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+}
+
+.ml-param-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ml-param-head strong {
+  font-size: 13px;
+}
+
+.ml-param-head span {
+  color: var(--fg-muted);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.ml-param-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.ml-param-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ml-param-range label {
+  display: grid;
+  gap: 6px;
+}
+
+.ml-param-range label span {
+  font-size: 11px;
+  color: var(--fg-muted);
+  letter-spacing: 0.04em;
+}
+
+.ml-param-best-inline {
+  color: #2db887;
+  font-weight: 600;
+}
+
+.ml-view input.input-modern[type="number"] {
+  border-radius: 8px;
+  min-height: 0;
+  padding: 8px 10px;
+}
+
+.ml-param-head .ml-param-best-inline {
+  color: #2db887;
 }
 
 .symbol-search {
@@ -830,6 +945,10 @@ body {
   }
 
   .backtest-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .ml-param-grid {
     grid-template-columns: 1fr;
   }
 

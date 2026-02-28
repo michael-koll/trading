@@ -33,6 +33,7 @@ type MlViewProps = {
   objective: "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct";
   paramSpecs: { name: string; type: "int" | "float"; default: number }[];
   paramRanges: Record<string, { min: number; max: number; type: "int" | "float" }>;
+  optimizedParams?: Record<string, number> | null;
   onSelectDataset: (value: string) => void;
   onSymbolChange: (value: string) => void;
   onIntervalChange: (value: string) => void;
@@ -60,6 +61,7 @@ export function MlView({
   objective,
   paramSpecs,
   paramRanges,
+  optimizedParams = null,
   onSelectDataset,
   onSymbolChange,
   onIntervalChange,
@@ -92,8 +94,24 @@ export function MlView({
           <div className="section-label">ML VIEW</div>
           <h3>Optuna Hyperparameter Tuning</h3>
         </div>
-        <button className="btn-primary" onClick={onRun} disabled={loading}>
-          {loading ? "Running..." : `Run Optimization for ${strategyName}`}
+        <button
+          className="btn-primary icon-action-btn"
+          onClick={onRun}
+          disabled={loading}
+          aria-label={loading ? "Running optimization" : `Run optimization for ${strategyName}`}
+          title={loading ? "Running optimization" : `Run optimization for ${strategyName}`}
+        >
+          {loading ? (
+            <span className="loading-dots" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </span>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M8 6L18 12L8 18V6Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+            </svg>
+          )}
         </button>
       </div>
 
@@ -198,47 +216,64 @@ export function MlView({
             disabled={loading}
           />
         </label>
-
-        {paramSpecs.map((param) => {
-          const range = paramRanges[param.name];
-          const minValue = range ? range.min : param.default;
-          const minStep = param.type === "int" ? 1 : 0.01;
-          return (
-            <label key={`${param.name}-min`}>
-              <span>{param.name} Min</span>
-              <input
-                className="input-modern"
-                type="number"
-                step={minStep}
-                value={minValue}
-                onChange={(e) => onParamRangeChange(param.name, "min", Number(e.target.value || 0))}
-                disabled={loading}
-              />
-            </label>
-          );
-        })}
-        {paramSpecs.length === 0 && (
-          <p className="muted">No numeric strategy params found in `class ... params`.</p>
-        )}
-        {paramSpecs.map((param) => {
-          const range = paramRanges[param.name];
-          const maxValue = range ? range.max : param.default;
-          const minStep = param.type === "int" ? 1 : 0.01;
-          return (
-            <label key={`${param.name}-max`}>
-              <span>{param.name} Max</span>
-              <input
-                className="input-modern"
-                type="number"
-                step={minStep}
-                value={maxValue}
-                onChange={(e) => onParamRangeChange(param.name, "max", Number(e.target.value || 0))}
-                disabled={loading}
-              />
-            </label>
-          );
-        })}
       </div>
+
+      <div className="section-label">STRATEGY PARAMETERS</div>
+      {paramSpecs.length === 0 && (
+        <p className="muted">No numeric strategy params found in `class ... params`.</p>
+      )}
+      {paramSpecs.length > 0 && (
+        <div className="ml-param-grid">
+          {paramSpecs.map((param) => {
+            const range = paramRanges[param.name];
+            const minValue = range ? range.min : param.default;
+            const maxValue = range ? range.max : param.default;
+            const step = param.type === "int" ? 1 : 0.01;
+            return (
+              <article key={param.name} className="ml-param-card">
+                <div className="ml-param-head">
+                  <strong>{param.name}</strong>
+                  <span className="ml-param-meta">
+                    <span>{param.type.toUpperCase()}</span>
+                    <span>|</span>
+                    <span>default {param.default}</span>
+                    {optimizedParams && optimizedParams[param.name] !== undefined && (
+                      <>
+                        <span>|</span>
+                        <span className="ml-param-best-inline">best {optimizedParams[param.name]}</span>
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="ml-param-range">
+                  <label>
+                    <span>Min</span>
+                    <input
+                      className="input-modern"
+                      type="number"
+                      step={step}
+                      value={minValue}
+                      onChange={(e) => onParamRangeChange(param.name, "min", Number(e.target.value || 0))}
+                      disabled={loading}
+                    />
+                  </label>
+                  <label>
+                    <span>Max</span>
+                    <input
+                      className="input-modern"
+                      type="number"
+                      step={step}
+                      value={maxValue}
+                      onChange={(e) => onParamRangeChange(param.name, "max", Number(e.target.value || 0))}
+                      disabled={loading}
+                    />
+                  </label>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
 
       {error && <p className="error-text">{error}</p>}
 
