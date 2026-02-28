@@ -13,24 +13,48 @@ class OptimizeService:
     SUPPORTED_OBJECTIVES = {"pnl", "final_value", "win_rate", "sharpe_ratio", "max_drawdown_pct"}
 
     @staticmethod
-    def _range_int(ranges: dict, key: str, default_min: int, default_max: int) -> tuple[int, int]:
-        node = ranges.get(key, {}) if isinstance(ranges, dict) else {}
-        min_v = int(node.get("min", default_min))
-        max_v = int(node.get("max", default_max))
-        if min_v >= max_v:
-            raise ValueError(f"Invalid range for {key}: min must be < max")
-        return min_v, max_v
+    def _build_param_specs(payload: dict, ranges: dict) -> list[dict]:
+        if not isinstance(ranges, dict) or not ranges:
+            raise ValueError("Optimization ranges are required")
 
-    @staticmethod
-    def _range_float(
-        ranges: dict, key: str, default_min: float, default_max: float
-    ) -> tuple[float, float]:
-        node = ranges.get(key, {}) if isinstance(ranges, dict) else {}
-        min_v = float(node.get("min", default_min))
-        max_v = float(node.get("max", default_max))
-        if min_v >= max_v:
-            raise ValueError(f"Invalid range for {key}: min must be < max")
-        return min_v, max_v
+        strategy_path = str(payload.get("strategy_path") or "").strip()
+        if not strategy_path:
+            raise ValueError("strategy_path is required")
+
+        strategy_info = BacktestService.inspect_strategy_params(strategy_path)
+        numeric_params = {
+            str(item["name"]): item
+            for item in strategy_info.get("params", [])
+            if isinstance(item, dict) and item.get("type") in {"int", "float"}
+        }
+
+        specs: list[dict] = []
+        for key, node in ranges.items():
+            name = str(key)
+            if name not in numeric_params:
+                raise ValueError(f"Range parameter '{name}' is not defined in strategy params")
+            if not isinstance(node, dict):
+                raise ValueError(f"Range for '{name}' must be an object with min/max")
+
+            param_type = str(numeric_params[name].get("type"))
+            try:
+                if param_type == "int":
+                    min_v = int(node.get("min"))
+                    max_v = int(node.get("max"))
+                else:
+                    min_v = float(node.get("min"))
+                    max_v = float(node.get("max"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Range for '{name}' must include numeric min/max values") from exc
+
+            if min_v >= max_v:
+                raise ValueError(f"Invalid range for {name}: min must be < max")
+
+            specs.append({"name": name, "type": param_type, "min": min_v, "max": max_v})
+
+        if not specs:
+            raise ValueError("No optimization parameters configured")
+        return specs
 
     @staticmethod
     def _objective_value(result: dict, objective: str) -> float:
@@ -58,10 +82,7 @@ class OptimizeService:
         direction = "minimize" if objective_name == "max_drawdown_pct" else "maximize"
         seed = payload.get("seed")
         sampler = TPESampler(seed=int(seed)) if seed is not None else TPESampler()
-
-        fast_min, fast_max = OptimizeService._range_int(ranges, "fast_period", 5, 40)
-        slow_min, slow_max = OptimizeService._range_int(ranges, "slow_period", 20, 120)
-        risk_min, risk_max = OptimizeService._range_float(ranges, "risk_pct", 0.1, 3.0)
+        param_specs = OptimizeService._build_param_specs(payload, ranges)
 
         frame = MarketDataService.get_ohlcv(payload)
         if len(frame) > OptimizeService.MAX_OPT_BARS:
@@ -70,13 +91,12 @@ class OptimizeService:
 
         def objective(trial: optuna.Trial) -> float:
             nonlocal failed_trials
-            params = {
-                "fast_period": trial.suggest_int("fast_period", fast_min, fast_max),
-                "slow_period": trial.suggest_int("slow_period", slow_min, slow_max),
-                "risk_pct": trial.suggest_float("risk_pct", risk_min, risk_max),
-            }
-            if params["slow_period"] <= params["fast_period"]:
-                raise optuna.TrialPruned("slow_period must be greater than fast_period")
+            params: dict[str, float | int] = {}
+            for spec in param_specs:
+                if spec["type"] == "int":
+                    params[spec["name"]] = trial.suggest_int(spec["name"], int(spec["min"]), int(spec["max"]))
+                else:
+                    params[spec["name"]] = trial.suggest_float(spec["name"], float(spec["min"]), float(spec["max"]))
 
             try:
                 result = BacktestService._execute(
@@ -112,11 +132,7 @@ class OptimizeService:
             "objective": objective_name,
             "direction": direction,
             "seed": int(seed) if seed is not None else None,
-            "search_space": {
-                "fast_period": {"min": fast_min, "max": fast_max},
-                "slow_period": {"min": slow_min, "max": slow_max},
-                "risk_pct": {"min": risk_min, "max": risk_max},
-            },
+            "search_space": {spec["name"]: {"min": spec["min"], "max": spec["max"], "type": spec["type"]} for spec in param_specs},
             "best_metrics": {
                 "final_value": float(best["final_value"]),
                 "pnl": float(best["pnl"]),

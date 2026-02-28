@@ -44,6 +44,20 @@ type BacktestResult = {
 
 type WorkspaceView = "coding" | "backtesting" | "ml" | "paper";
 type ObjectiveKey = "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct";
+type StrategyParamSpec = {
+  name: string;
+  type: "int" | "float";
+  default: number;
+  suggested_min: number;
+  suggested_max: number;
+};
+type MlRange = { min: number; max: number; type: "int" | "float" };
+type MlSessionCache = {
+  resultText: string;
+  bestRun: BacktestResult | null;
+  error: string;
+  ranges: Record<string, MlRange>;
+};
 type PaperStateResponse = {
   session: {
     session_id: string;
@@ -70,13 +84,22 @@ type DatasetItem = {
   end: string | null;
   columns: string[];
 };
+type PaperSessionCache = {
+  sessionId: string;
+  error: string;
+  state: PaperStateResponse | null;
+};
 
 export default function HomePage() {
   const [view, setView] = useState<WorkspaceView>("coding");
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [codeByStrategy, setCodeByStrategy] = useState<Record<string, string>>({});
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [backtestByStrategy, setBacktestByStrategy] = useState<Record<string, BacktestResult>>({});
+  const [paramSpecsByStrategy, setParamSpecsByStrategy] = useState<Record<string, StrategyParamSpec[]>>({});
+  const [mlByStrategy, setMlByStrategy] = useState<Record<string, MlSessionCache>>({});
   const [mlBestResult, setMlBestResult] = useState<BacktestResult | null>(null);
   const [optuna, setOptuna] = useState<string>("");
   const [mlLoading, setMlLoading] = useState<boolean>(false);
@@ -84,15 +107,12 @@ export default function HomePage() {
   const [mlTrials, setMlTrials] = useState<number>(8);
   const [mlSeed, setMlSeed] = useState<number>(42);
   const [mlObjective, setMlObjective] = useState<ObjectiveKey>("pnl");
-  const [mlFastMin, setMlFastMin] = useState<number>(5);
-  const [mlFastMax, setMlFastMax] = useState<number>(40);
-  const [mlSlowMin, setMlSlowMin] = useState<number>(20);
-  const [mlSlowMax, setMlSlowMax] = useState<number>(120);
-  const [mlRiskMin, setMlRiskMin] = useState<number>(0.1);
-  const [mlRiskMax, setMlRiskMax] = useState<number>(3.0);
+  const [mlParamSpecs, setMlParamSpecs] = useState<StrategyParamSpec[]>([]);
+  const [mlRanges, setMlRanges] = useState<Record<string, MlRange>>({});
   const [paperSession, setPaperSession] = useState<string>("");
   const [paperError, setPaperError] = useState<string>("");
   const [paperState, setPaperState] = useState<PaperStateResponse | null>(null);
+  const [paperByStrategy, setPaperByStrategy] = useState<Record<string, PaperSessionCache>>({});
   const [paperLoading, setPaperLoading] = useState<boolean>(false);
   const [datasets, setDatasets] = useState<DatasetItem[]>([]);
   const [selectedDataset, setSelectedDataset] = useState<string>("");
@@ -122,9 +142,76 @@ export default function HomePage() {
 
   useEffect(() => {
     if (!selectedPath) return;
-    apiGet<{ content: string }>(`/strategies/${selectedPath}`)
-      .then((res) => setCode(res.content))
-      .catch(console.error);
+    let active = true;
+    // Restore cached view state for this strategy in the current session.
+    setResult(backtestByStrategy[selectedPath] || null);
+    const mlCached = mlByStrategy[selectedPath];
+    setMlBestResult(mlCached?.bestRun || null);
+    setOptuna(mlCached?.resultText || "");
+    setMlError(mlCached?.error || "");
+    setMlRanges(mlCached?.ranges || {});
+    const paperCached = paperByStrategy[selectedPath];
+    setPaperSession(paperCached?.sessionId || "");
+    setPaperError(paperCached?.error || "");
+    setPaperState(paperCached?.state || null);
+    const cachedCode = codeByStrategy[selectedPath];
+    if (cachedCode !== undefined) {
+      setCode(cachedCode);
+    } else {
+      apiGet<{ content: string }>(`/strategies/${selectedPath}`)
+        .then((res) => {
+          if (!active) return;
+          setCode(res.content);
+          setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: res.content }));
+        })
+        .catch(console.error);
+    }
+
+    const cachedParams = paramSpecsByStrategy[selectedPath];
+    if (cachedParams) {
+      setMlParamSpecs(cachedParams);
+      if (!mlCached?.ranges) {
+        setMlRanges(
+          cachedParams.reduce<Record<string, MlRange>>((acc, p) => {
+            acc[p.name] = {
+              min: Number(p.suggested_min),
+              max: Number(p.suggested_max),
+              type: p.type,
+            };
+            return acc;
+          }, {})
+        );
+      }
+    } else {
+      apiGet<{ params: StrategyParamSpec[] }>(`/strategy-params/${selectedPath}`)
+        .then((res) => {
+          if (!active) return;
+          const params = Array.isArray(res.params) ? res.params : [];
+          setMlParamSpecs(params);
+          setParamSpecsByStrategy((prev) => ({ ...prev, [selectedPath]: params }));
+          if (!mlCached?.ranges) {
+            setMlRanges(
+              params.reduce<Record<string, MlRange>>((acc, p) => {
+                acc[p.name] = {
+                  min: Number(p.suggested_min),
+                  max: Number(p.suggested_max),
+                  type: p.type,
+                };
+                return acc;
+              }, {})
+            );
+          }
+        })
+        .catch((err) => {
+          if (!active) return;
+          console.error(err);
+          setMlParamSpecs([]);
+          if (!mlCached?.ranges) setMlRanges({});
+        });
+    }
+    return () => {
+      active = false;
+    };
   }, [selectedPath]);
 
   useEffect(() => {
@@ -138,6 +225,34 @@ export default function HomePage() {
   async function saveStrategy() {
     if (!selectedPath) return;
     await apiPost("/strategies", { path: selectedPath, content: code });
+    setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: code }));
+    const meta = await apiGet<{ params: StrategyParamSpec[] }>(`/strategy-params/${selectedPath}`);
+    const params = Array.isArray(meta.params) ? meta.params : [];
+    setMlParamSpecs(params);
+    setParamSpecsByStrategy((prev) => ({ ...prev, [selectedPath]: params }));
+    const resetRanges = params.reduce<Record<string, MlRange>>((acc, p) => {
+      acc[p.name] = {
+        min: Number(p.suggested_min),
+        max: Number(p.suggested_max),
+        type: p.type,
+      };
+      return acc;
+    }, {});
+    setMlRanges(resetRanges);
+    setMlByStrategy((prev) => ({
+      ...prev,
+      [selectedPath]: {
+        resultText: "",
+        bestRun: null,
+        error: "",
+        ranges: resetRanges,
+      },
+    }));
+    setBacktestByStrategy((prev) => {
+      const out = { ...prev };
+      delete out[selectedPath];
+      return out;
+    });
     await reloadStrategies();
   }
 
@@ -149,11 +264,71 @@ export default function HomePage() {
 
   async function renameStrategy(oldPath: string, newPath: string) {
     await apiPost("/strategies/rename", { old_path: oldPath, new_path: newPath });
+    setCodeByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
+    setParamSpecsByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
+    setBacktestByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
+    setMlByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
+    setPaperByStrategy((prev) => {
+      if (!(oldPath in prev)) return prev;
+      const out = { ...prev, [newPath]: prev[oldPath] };
+      delete out[oldPath];
+      return out;
+    });
     await reloadStrategies();
   }
 
   async function deleteStrategy(path: string) {
     await apiPost("/strategies/delete", { path });
+    setCodeByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
+    setParamSpecsByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
+    setBacktestByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
+    setMlByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
+    setPaperByStrategy((prev) => {
+      if (!(path in prev)) return prev;
+      const out = { ...prev };
+      delete out[path];
+      return out;
+    });
     await reloadStrategies();
   }
 
@@ -170,10 +345,32 @@ export default function HomePage() {
       dataset_path: selectedDataset || null,
     });
     setResult(backtest);
+    setBacktestByStrategy((prev) => ({ ...prev, [selectedPath]: backtest }));
   }
 
   async function runOptimization() {
     if (!selectedPath) return;
+    const rangesPayload = Object.entries(mlRanges).reduce<Record<string, { min: number; max: number }>>(
+      (acc, [name, range]) => {
+        acc[name] = { min: range.min, max: range.max };
+        return acc;
+      },
+      {}
+    );
+    if (Object.keys(rangesPayload).length === 0) {
+      setMlError("No numeric params found in strategy `params`.");
+      setMlByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          resultText: optuna,
+          bestRun: mlBestResult,
+          error: "No numeric params found in strategy `params`.",
+          ranges: mlRanges,
+        },
+      }));
+      return;
+    }
+
     setMlLoading(true);
     setMlError("");
     setMlBestResult(null);
@@ -190,13 +387,10 @@ export default function HomePage() {
         n_trials: mlTrials,
         seed: mlSeed,
         objective: mlObjective,
-        ranges: {
-          fast_period: { min: mlFastMin, max: mlFastMax },
-          slow_period: { min: mlSlowMin, max: mlSlowMax },
-          risk_pct: { min: mlRiskMin, max: mlRiskMax },
-        },
+        ranges: rangesPayload,
       });
-      setOptuna(JSON.stringify(res, null, 2));
+      const resultText = JSON.stringify(res, null, 2);
+      setOptuna(resultText);
 
       const bestRun = await apiPost<BacktestResult>("/backtests/run", {
         strategy_path: selectedPath,
@@ -210,8 +404,27 @@ export default function HomePage() {
         params: res.best_params,
       });
       setMlBestResult(bestRun);
+      setMlByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          resultText,
+          bestRun,
+          error: "",
+          ranges: mlRanges,
+        },
+      }));
     } catch (err) {
-      setMlError(String((err as Error).message || err));
+      const msg = String((err as Error).message || err);
+      setMlError(msg);
+      setMlByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          resultText: optuna,
+          bestRun: mlBestResult,
+          error: msg,
+          ranges: mlRanges,
+        },
+      }));
     } finally {
       setMlLoading(false);
     }
@@ -233,17 +446,42 @@ export default function HomePage() {
       broker,
     });
     setPaperSession(res.session_id);
+    setPaperByStrategy((prev) => ({
+      ...prev,
+      [selectedPath]: {
+        sessionId: res.session_id,
+        error: "",
+        state: null,
+      },
+    }));
   }
 
   async function refreshPaperState() {
-    if (!paperSession) return;
+    if (!paperSession || !selectedPath) return;
     setPaperLoading(true);
     try {
       const state = await apiGet<PaperStateResponse>(`/paper/sessions/${paperSession}/state`);
       setPaperState(state);
       setPaperError("");
+      setPaperByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          sessionId: paperSession,
+          error: "",
+          state,
+        },
+      }));
     } catch (err) {
-      setPaperError(String((err as Error).message || err));
+      const msg = String((err as Error).message || err);
+      setPaperError(msg);
+      setPaperByStrategy((prev) => ({
+        ...prev,
+        [selectedPath]: {
+          sessionId: paperSession,
+          error: msg,
+          state: paperState,
+        },
+      }));
     } finally {
       setPaperLoading(false);
     }
@@ -289,7 +527,16 @@ export default function HomePage() {
 
         <div className="view-stage">
           {view === "coding" && (
-            <CodingView title={activeName} code={code} onChange={setCode} onSave={saveStrategy} />
+            <CodingView
+              title={activeName}
+              code={code}
+              onChange={(next) => {
+                setCode(next);
+                if (!selectedPath) return;
+                setCodeByStrategy((prev) => ({ ...prev, [selectedPath]: next }));
+              }}
+              onSave={saveStrategy}
+            />
           )}
 
           {view === "backtesting" && (
@@ -337,18 +584,37 @@ export default function HomePage() {
               objective={mlObjective}
               onObjectiveChange={setMlObjective}
               bestRun={mlBestResult}
-              fastMin={mlFastMin}
-              fastMax={mlFastMax}
-              onFastMinChange={setMlFastMin}
-              onFastMaxChange={setMlFastMax}
-              slowMin={mlSlowMin}
-              slowMax={mlSlowMax}
-              onSlowMinChange={setMlSlowMin}
-              onSlowMaxChange={setMlSlowMax}
-              riskMin={mlRiskMin}
-              riskMax={mlRiskMax}
-              onRiskMinChange={setMlRiskMin}
-              onRiskMaxChange={setMlRiskMax}
+              paramSpecs={mlParamSpecs}
+              paramRanges={mlRanges}
+              onParamRangeChange={(name, field, value) => {
+                if (!selectedPath) return;
+                setMlRanges((prev) => {
+                  const next = {
+                    ...prev,
+                    [name]: {
+                      ...(prev[name] || {
+                        min: value,
+                        max: value + 1,
+                        type: mlParamSpecs.find((p) => p.name === name)?.type || "float",
+                      }),
+                      [field]:
+                        (prev[name]?.type || mlParamSpecs.find((p) => p.name === name)?.type) === "int"
+                          ? Math.round(value)
+                          : value,
+                    },
+                  };
+                  setMlByStrategy((cache) => ({
+                    ...cache,
+                    [selectedPath]: {
+                      resultText: cache[selectedPath]?.resultText || optuna,
+                      bestRun: cache[selectedPath]?.bestRun || mlBestResult,
+                      error: cache[selectedPath]?.error || mlError,
+                      ranges: next,
+                    },
+                  }));
+                  return next;
+                });
+              }}
               onRun={runOptimization}
             />
           )}

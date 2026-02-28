@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from inspect import isclass
+from numbers import Integral, Real
 from uuid import uuid4
 
 import backtrader as bt
@@ -62,6 +64,38 @@ class SmaCrossStrategy(bt.Strategy):
             self._wins += 1
 
 
+class EquityCurveAnalyzer(bt.Analyzer):
+    def start(self) -> None:
+        self._curve: list[dict] = []
+
+    def next(self) -> None:
+        dt = self.strategy.data.datetime.datetime(0).isoformat()
+        self._curve.append({"time": dt, "value": round(float(self.strategy.broker.getvalue()), 2)})
+
+    def get_analysis(self) -> list[dict]:
+        return self._curve
+
+
+class TradeMarkerAnalyzer(bt.Analyzer):
+    def start(self) -> None:
+        self._markers: list[dict] = []
+
+    def notify_order(self, order: bt.Order) -> None:
+        if order.status != order.Completed:
+            return
+        side = "buy" if order.isbuy() else "sell"
+        self._markers.append(
+            {
+                "time": bt.num2date(order.executed.dt).isoformat(),
+                "price": round(float(order.executed.price), 4),
+                "side": side,
+            }
+        )
+
+    def get_analysis(self) -> list[dict]:
+        return self._markers
+
+
 class BacktestService:
     SUPPORTED_INDICATORS = {"sma", "ema", "wma", "rsi"}
 
@@ -107,10 +141,153 @@ class BacktestService:
         ]
 
     @staticmethod
+    def _resolve_strategy_class(strategy_module: object) -> type[bt.Strategy]:
+        # Preferred explicit export for strategy scripts.
+        explicit = getattr(strategy_module, "Strategy", None)
+        if isclass(explicit) and issubclass(explicit, bt.Strategy):
+            return explicit
+
+        # Fallback: first bt.Strategy subclass declared in this module.
+        module_name = getattr(strategy_module, "__name__", "")
+        for candidate in vars(strategy_module).values():
+            if (
+                isclass(candidate)
+                and issubclass(candidate, bt.Strategy)
+                and candidate is not bt.Strategy
+                and getattr(candidate, "__module__", None) == module_name
+            ):
+                return candidate
+
+        raise ValueError(
+            "Strategy module must define a Backtrader strategy class. "
+            "Add `class Strategy(bt.Strategy): ...` to the script."
+        )
+
+    @staticmethod
+    def _strategy_param_keys(strategy_class: type[bt.Strategy]) -> set[str]:
+        raw_params = getattr(strategy_class, "params", None)
+        if raw_params is None:
+            return set()
+
+        if hasattr(raw_params, "_getkeys"):
+            try:
+                return {str(key) for key in raw_params._getkeys()}
+            except Exception:
+                return set()
+
+        if isinstance(raw_params, Mapping):
+            return {str(key) for key in raw_params.keys()}
+
+        if isinstance(raw_params, (list, tuple)):
+            keys: set[str] = set()
+            for item in raw_params:
+                if isinstance(item, (list, tuple)) and item:
+                    keys.add(str(item[0]))
+            return keys
+
+        return set()
+
+    @staticmethod
+    def _strategy_param_defaults(strategy_class: type[bt.Strategy]) -> dict[str, object]:
+        raw_params = getattr(strategy_class, "params", None)
+        if raw_params is None:
+            return {}
+
+        if hasattr(raw_params, "_getitems"):
+            try:
+                return {str(k): v for k, v in raw_params._getitems()}
+            except Exception:
+                return {}
+
+        if isinstance(raw_params, Mapping):
+            return {str(k): v for k, v in raw_params.items()}
+
+        if isinstance(raw_params, (list, tuple)):
+            out: dict[str, object] = {}
+            for item in raw_params:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    out[str(item[0])] = item[1]
+            return out
+
+        return {}
+
+    @staticmethod
+    def _default_optimization_range(default_value: object) -> tuple[float | int, float | int] | None:
+        if isinstance(default_value, bool):
+            return None
+
+        if isinstance(default_value, Integral):
+            base = int(default_value)
+            if base <= 0:
+                return 1, 10
+            minimum = max(1, int(base * 0.5))
+            maximum = max(minimum + 1, int(base * 2))
+            return minimum, maximum
+
+        if isinstance(default_value, Real):
+            base = float(default_value)
+            if base <= 0:
+                return 0.01, 1.0
+            minimum = max(0.0001, round(base * 0.5, 6))
+            maximum = max(minimum + 0.0001, round(base * 2, 6))
+            return minimum, maximum
+
+        return None
+
+    @staticmethod
+    def inspect_strategy_params(rel_path: str) -> dict:
+        strategy_module = load_strategy_module(rel_path)
+        strategy_class = BacktestService._resolve_strategy_class(strategy_module)
+        defaults = BacktestService._strategy_param_defaults(strategy_class)
+
+        params_out: list[dict] = []
+        for name, default_value in defaults.items():
+            range_values = BacktestService._default_optimization_range(default_value)
+            if range_values is None:
+                continue
+
+            if isinstance(default_value, Integral) and not isinstance(default_value, bool):
+                ptype = "int"
+                default_numeric = int(default_value)
+            else:
+                ptype = "float"
+                default_numeric = float(default_value)
+
+            params_out.append(
+                {
+                    "name": str(name),
+                    "type": ptype,
+                    "default": default_numeric,
+                    "suggested_min": range_values[0],
+                    "suggested_max": range_values[1],
+                }
+            )
+
+        return {
+            "strategy_class": getattr(strategy_class, "__name__", str(strategy_class)),
+            "params": sorted(params_out, key=lambda x: x["name"]),
+        }
+
+    @staticmethod
+    def _filter_strategy_params(strategy_class: type[bt.Strategy], params: dict) -> tuple[dict, list[str]]:
+        allowed = BacktestService._strategy_param_keys(strategy_class)
+        if not allowed:
+            return params, []
+
+        filtered: dict = {}
+        ignored: list[str] = []
+        for key, value in params.items():
+            if str(key) in allowed:
+                filtered[key] = value
+            else:
+                ignored.append(str(key))
+        return filtered, sorted(ignored)
+
+    @staticmethod
     def _resolve_indicator_specs(strategy_module: object, params: dict) -> list[dict]:
         raw = getattr(strategy_module, "INDICATORS", None)
         if not isinstance(raw, list):
-            return BacktestService._default_indicator_specs(params)
+            return []
 
         specs: list[dict] = []
         for i, item in enumerate(raw):
@@ -152,7 +329,7 @@ class BacktestService:
                 }
             )
 
-        return specs or BacktestService._default_indicator_specs(params)
+        return specs
 
     @staticmethod
     def _compute_indicator(frame: pd.DataFrame, spec: dict) -> pd.Series:
@@ -202,25 +379,31 @@ class BacktestService:
             params.update(params_override)
 
         frame = frame_override if frame_override is not None else MarketDataService.get_ohlcv(payload)
+        strategy_class = BacktestService._resolve_strategy_class(strategy_module)
+        strategy_params, ignored_strategy_params = BacktestService._filter_strategy_params(strategy_class, params)
 
         cerebro = bt.Cerebro(stdstats=False)
         cerebro.broker.setcash(base)
         cerebro.broker.setcommission(commission=0.001)
         feed = bt.feeds.PandasData(dataname=frame)
         cerebro.adddata(feed)
-        cerebro.addstrategy(SmaCrossStrategy, **params)
+        cerebro.addstrategy(strategy_class, **strategy_params)
         cerebro.addanalyzer(bt.analyzers.DrawDown, _name="drawdown")
         cerebro.addanalyzer(bt.analyzers.SharpeRatio_A, _name="sharpe")
         cerebro.addanalyzer(bt.analyzers.Returns, _name="returns")
         cerebro.addanalyzer(bt.analyzers.TradeAnalyzer, _name="trades")
         cerebro.addanalyzer(bt.analyzers.SQN, _name="sqn")
+        cerebro.addanalyzer(EquityCurveAnalyzer, _name="equitycurve")
+        cerebro.addanalyzer(TradeMarkerAnalyzer, _name="trademarkers")
 
-        result = cerebro.run()
-        strategy: SmaCrossStrategy = result[0]
+        try:
+            result = cerebro.run()
+        except TypeError as exc:
+            raise ValueError(f"Invalid strategy configuration: {exc}") from exc
+        strategy: bt.Strategy = result[0]
 
         final_value = round(float(cerebro.broker.getvalue()), 2)
         pnl = round(final_value - base, 2)
-        win_rate = round((strategy._wins / strategy._closed) if strategy._closed else 0.0, 3)
         pnl_pct = round((pnl / base) * 100.0 if base else 0.0, 4)
 
         drawdown = strategy.analyzers.drawdown.get_analysis()
@@ -239,8 +422,19 @@ class BacktestService:
         total_trades = int((trades.get("total", {}) or {}).get("closed", 0) or 0)
         won_total = int((trades.get("won", {}) or {}).get("total", 0) or 0)
         lost_total = int((trades.get("lost", {}) or {}).get("total", 0) or 0)
+        win_rate = round((won_total / total_trades) if total_trades else 0.0, 3)
         gross_pnl = (trades.get("pnl", {}) or {}).get("gross", {}) or {}
         net_pnl = (trades.get("pnl", {}) or {}).get("net", {}) or {}
+        equity_curve = strategy.analyzers.equitycurve.get_analysis()
+        if not isinstance(equity_curve, list):
+            equity_curve = []
+        markers = getattr(strategy, "_markers", [])
+        if not isinstance(markers, list):
+            markers = []
+        if not markers:
+            markers = strategy.analyzers.trademarkers.get_analysis()
+            if not isinstance(markers, list):
+                markers = []
         price_bars = [
             {
                 "time": idx.isoformat(),
@@ -280,14 +474,15 @@ class BacktestService:
             "pnl": pnl,
             "pnl_pct": pnl_pct,
             "win_rate": win_rate,
-            "equity_curve": strategy._equity_curve,
+            "equity_curve": equity_curve,
             "price_bars": price_bars,
             "indicator_series": indicator_series,
-            "markers": strategy._markers,
+            "markers": markers,
             "params": params,
             "bars": len(frame),
             "context": {
                 "strategy_path": payload.get("strategy_path"),
+                "strategy_class": getattr(strategy_class, "__name__", str(strategy_class)),
                 "symbol": payload.get("symbol", "AAPL"),
                 "market": payload.get("market", "stocks"),
                 "exchange": payload.get("exchange"),
@@ -297,6 +492,7 @@ class BacktestService:
                 "dataset_source": "local" if payload.get("dataset_path") else "yfinance",
                 "start_time": frame.index.min().isoformat() if len(frame) else None,
                 "end_time": frame.index.max().isoformat() if len(frame) else None,
+                "ignored_strategy_params": ignored_strategy_params,
                 "indicator_labels": indicator_labels,
                 "indicator_colors": indicator_colors,
                 "indicator_warnings": indicator_warnings,

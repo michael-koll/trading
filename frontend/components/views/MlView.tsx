@@ -31,12 +31,8 @@ type MlViewProps = {
   trials: number;
   seed: number;
   objective: "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct";
-  fastMin: number;
-  fastMax: number;
-  slowMin: number;
-  slowMax: number;
-  riskMin: number;
-  riskMax: number;
+  paramSpecs: { name: string; type: "int" | "float"; default: number }[];
+  paramRanges: Record<string, { min: number; max: number; type: "int" | "float" }>;
   onSelectDataset: (value: string) => void;
   onSymbolChange: (value: string) => void;
   onIntervalChange: (value: string) => void;
@@ -44,12 +40,7 @@ type MlViewProps = {
   onTrialsChange: (value: number) => void;
   onSeedChange: (value: number) => void;
   onObjectiveChange: (value: "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct") => void;
-  onFastMinChange: (value: number) => void;
-  onFastMaxChange: (value: number) => void;
-  onSlowMinChange: (value: number) => void;
-  onSlowMaxChange: (value: number) => void;
-  onRiskMinChange: (value: number) => void;
-  onRiskMaxChange: (value: number) => void;
+  onParamRangeChange: (name: string, field: "min" | "max", value: number) => void;
   onRun: () => void;
 };
 
@@ -67,12 +58,8 @@ export function MlView({
   trials,
   seed,
   objective,
-  fastMin,
-  fastMax,
-  slowMin,
-  slowMax,
-  riskMin,
-  riskMax,
+  paramSpecs,
+  paramRanges,
   onSelectDataset,
   onSymbolChange,
   onIntervalChange,
@@ -80,12 +67,7 @@ export function MlView({
   onTrialsChange,
   onSeedChange,
   onObjectiveChange,
-  onFastMinChange,
-  onFastMaxChange,
-  onSlowMinChange,
-  onSlowMaxChange,
-  onRiskMinChange,
-  onRiskMaxChange,
+  onParamRangeChange,
   onRun,
 }: MlViewProps) {
   const intervalOptions = [
@@ -217,30 +199,45 @@ export function MlView({
           />
         </label>
 
-        <label>
-          <span>Fast Period Min</span>
-          <input className="input-modern" type="number" min={1} value={fastMin} onChange={(e) => onFastMinChange(Number(e.target.value || 1))} disabled={loading} />
-        </label>
-        <label>
-          <span>Fast Period Max</span>
-          <input className="input-modern" type="number" min={2} value={fastMax} onChange={(e) => onFastMaxChange(Number(e.target.value || 2))} disabled={loading} />
-        </label>
-        <label>
-          <span>Slow Period Min</span>
-          <input className="input-modern" type="number" min={2} value={slowMin} onChange={(e) => onSlowMinChange(Number(e.target.value || 2))} disabled={loading} />
-        </label>
-        <label>
-          <span>Slow Period Max</span>
-          <input className="input-modern" type="number" min={3} value={slowMax} onChange={(e) => onSlowMaxChange(Number(e.target.value || 3))} disabled={loading} />
-        </label>
-        <label>
-          <span>Risk % Min</span>
-          <input className="input-modern" type="number" min={0.01} step={0.01} value={riskMin} onChange={(e) => onRiskMinChange(Number(e.target.value || 0.01))} disabled={loading} />
-        </label>
-        <label>
-          <span>Risk % Max</span>
-          <input className="input-modern" type="number" min={0.02} step={0.01} value={riskMax} onChange={(e) => onRiskMaxChange(Number(e.target.value || 0.02))} disabled={loading} />
-        </label>
+        {paramSpecs.map((param) => {
+          const range = paramRanges[param.name];
+          const minValue = range ? range.min : param.default;
+          const minStep = param.type === "int" ? 1 : 0.01;
+          return (
+            <label key={`${param.name}-min`}>
+              <span>{param.name} Min</span>
+              <input
+                className="input-modern"
+                type="number"
+                step={minStep}
+                value={minValue}
+                onChange={(e) => onParamRangeChange(param.name, "min", Number(e.target.value || 0))}
+                disabled={loading}
+              />
+            </label>
+          );
+        })}
+        {paramSpecs.length === 0 && (
+          <p className="muted">No numeric strategy params found in `class ... params`.</p>
+        )}
+        {paramSpecs.map((param) => {
+          const range = paramRanges[param.name];
+          const maxValue = range ? range.max : param.default;
+          const minStep = param.type === "int" ? 1 : 0.01;
+          return (
+            <label key={`${param.name}-max`}>
+              <span>{param.name} Max</span>
+              <input
+                className="input-modern"
+                type="number"
+                step={minStep}
+                value={maxValue}
+                onChange={(e) => onParamRangeChange(param.name, "max", Number(e.target.value || 0))}
+                disabled={loading}
+              />
+            </label>
+          );
+        })}
       </div>
 
       {error && <p className="error-text">{error}</p>}
@@ -258,9 +255,15 @@ export function MlView({
               <tr><td>Objective</td><td>{objective}</td></tr>
               <tr><td>Trials</td><td>{trials}</td></tr>
               <tr><td>Seed</td><td>{seed}</td></tr>
-              <tr><td>Fast Period Range</td><td>{fastMin} - {fastMax}</td></tr>
-              <tr><td>Slow Period Range</td><td>{slowMin} - {slowMax}</td></tr>
-              <tr><td>Risk % Range</td><td>{riskMin} - {riskMax}</td></tr>
+              {paramSpecs.map((param) => {
+                const range = paramRanges[param.name];
+                return (
+                  <tr key={`ctx-${param.name}`}>
+                    <td>{param.name} Range</td>
+                    <td>{range ? `${range.min} - ${range.max}` : "-"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

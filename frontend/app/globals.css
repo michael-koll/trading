@@ -208,10 +208,15 @@ body {
 .file-star {
   width: 24px;
   height: 24px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.03);
   color: #8a8f98;
+  line-height: 1;
+  font-size: 14px;
   cursor: pointer;
   flex: 0 0 auto;
 }

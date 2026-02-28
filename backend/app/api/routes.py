@@ -41,6 +41,16 @@ def read_strategy(path: str) -> dict:
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.get("/strategy-params/{path:path}")
+def strategy_params(path: str) -> dict:
+    try:
+        return BacktestService.inspect_strategy_params(path)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/strategies")
 def save_strategy(payload: SaveStrategyRequest) -> dict:
     try:
