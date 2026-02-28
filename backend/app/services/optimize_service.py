@@ -12,6 +12,8 @@ from app.services.market_data_service import MarketDataService
 
 class OptimizeService:
     MAX_OPT_BARS = 5000
+    MIN_TRAIN_BARS = 200
+    MIN_OOS_BARS = 50
     SUPPORTED_OBJECTIVES = {"pnl", "final_value", "win_rate", "sharpe_ratio", "max_drawdown_pct"}
 
     @staticmethod
@@ -83,6 +85,12 @@ class OptimizeService:
         if n_trials < 1:
             raise ValueError("n_trials must be >= 1")
         ranges = payload.get("ranges") or {}
+        try:
+            split_pct = float(payload.get("split_pct", 70.0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("split_pct must be a number between 1 and 99") from exc
+        if not (1.0 <= split_pct <= 99.0):
+            raise ValueError("split_pct must be between 1 and 99")
         objective_name = str(payload.get("objective", "pnl")).strip().lower()
         if objective_name not in OptimizeService.SUPPORTED_OBJECTIVES:
             raise ValueError(
@@ -100,9 +108,32 @@ class OptimizeService:
         sampler = TPESampler(seed=seed) if seed is not None else TPESampler()
         param_specs = OptimizeService._build_param_specs(payload, ranges)
 
-        frame = MarketDataService.get_ohlcv(payload)
-        if len(frame) > OptimizeService.MAX_OPT_BARS:
-            frame = frame.tail(OptimizeService.MAX_OPT_BARS).copy()
+        frame_full = MarketDataService.get_ohlcv(payload)
+        if len(frame_full) > OptimizeService.MAX_OPT_BARS:
+            frame_full = frame_full.tail(OptimizeService.MAX_OPT_BARS).copy()
+        total_bars = int(len(frame_full))
+        if total_bars < (OptimizeService.MIN_TRAIN_BARS + OptimizeService.MIN_OOS_BARS):
+            raise ValueError(
+                f"Not enough data bars ({total_bars}) for split optimization. "
+                f"Need at least {OptimizeService.MIN_TRAIN_BARS + OptimizeService.MIN_OOS_BARS} bars."
+            )
+
+        train_end_idx = int(math.floor((total_bars - 1) * (split_pct / 100.0)))
+        train_bars = int(train_end_idx + 1)
+        oos_bars = int(total_bars - train_bars)
+        if train_bars < OptimizeService.MIN_TRAIN_BARS:
+            raise ValueError(
+                f"Training bars (IS) too low at {train_bars}. "
+                f"Increase split_pct or use more data (min {OptimizeService.MIN_TRAIN_BARS})."
+            )
+        if oos_bars < OptimizeService.MIN_OOS_BARS:
+            raise ValueError(
+                f"OOS bars too low at {oos_bars}. "
+                f"Decrease split_pct or use more data (min {OptimizeService.MIN_OOS_BARS})."
+            )
+        train_end_raw = frame_full.index[train_end_idx]
+        train_end_time = train_end_raw.isoformat() if hasattr(train_end_raw, "isoformat") else str(train_end_raw)
+        frame = frame_full.iloc[:train_bars].copy()
         failed_trials = 0
 
         def objective(trial: optuna.Trial) -> float:
@@ -180,5 +211,11 @@ class OptimizeService:
                 "bars": best_bars,
             },
             "best_backtest_replayed": bool(isinstance(best, dict)),
-            "data_bars_used": int(len(frame)),
+            "split_pct": float(split_pct),
+            "train_end_index": int(train_end_idx),
+            "train_end_time": str(train_end_time),
+            "train_bars": int(train_bars),
+            "oos_bars": int(oos_bars),
+            "data_bars_used": int(train_bars),
+            "total_bars": int(total_bars),
         }

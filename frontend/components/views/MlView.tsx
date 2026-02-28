@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { ChartPane } from "@/components/ChartPane";
 import { TradeChartPane } from "@/components/TradeChartPane";
 
@@ -34,6 +35,10 @@ type MlViewProps = {
   paramSpecs: { name: string; type: "int" | "float"; default: number }[];
   paramRanges: Record<string, { min: number; max: number; type: "int" | "float" }>;
   optimizedParams?: Record<string, number> | null;
+  splitPct: number;
+  trainBars: number | null;
+  oosBars: number | null;
+  cutoffTimestamp: string | null;
   onSelectDataset: (value: string) => void;
   onSymbolChange: (value: string) => void;
   onIntervalChange: (value: string) => void;
@@ -41,6 +46,7 @@ type MlViewProps = {
   onTrialsChange: (value: number) => void;
   onSeedChange: (value: number) => void;
   onObjectiveChange: (value: "pnl" | "final_value" | "win_rate" | "sharpe_ratio" | "max_drawdown_pct") => void;
+  onSplitPctChange: (value: number) => void;
   onParamRangeChange: (name: string, field: "min" | "max", value: number) => void;
   onRun: () => void;
 };
@@ -62,6 +68,10 @@ export function MlView({
   paramSpecs,
   paramRanges,
   optimizedParams = null,
+  splitPct,
+  trainBars,
+  oosBars,
+  cutoffTimestamp,
   onSelectDataset,
   onSymbolChange,
   onIntervalChange,
@@ -69,6 +79,7 @@ export function MlView({
   onTrialsChange,
   onSeedChange,
   onObjectiveChange,
+  onSplitPctChange,
   onParamRangeChange,
   onRun,
 }: MlViewProps) {
@@ -86,7 +97,7 @@ export function MlView({
     { value: "6mo", label: "6 Months" },
     { value: "1y", label: "1 Year" },
   ];
-
+  const splitSliderStyle = { "--split-pct": `${splitPct}%` } as CSSProperties;
   return (
     <section className="card panel backtest-view ml-view">
       <div className="panel-head">
@@ -274,6 +285,28 @@ export function MlView({
           })}
         </div>
       )}
+
+      <div className="section-label">BAR SPLIT</div>
+      <div className="ml-split-card">
+        <div className="ml-split-row">
+          <span className="ml-split-value">{splitPct}%</span>
+          <input
+            type="range"
+            min={1}
+            max={99}
+            step={1}
+            value={splitPct}
+            style={splitSliderStyle}
+            onChange={(e) => onSplitPctChange(Number(e.target.value || 70))}
+            disabled={loading}
+          />
+        </div>
+        <div className="ml-split-bars">
+          <span>IS Bars: {trainBars ?? "-"}</span>
+          <span>OOS Bars: {oosBars ?? "-"}</span>
+          <span>Cutoff Timestamp: {cutoffTimestamp || "-"}</span>
+        </div>
+      </div>
 
       {error && <p className="error-text">{error}</p>}
 

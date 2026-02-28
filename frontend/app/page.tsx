@@ -58,6 +58,9 @@ type MlSessionCache = {
   error: string;
   ranges: Record<string, MlRange>;
   bestParams: Record<string, number> | null;
+  splitPct: number;
+  totalBars: number | null;
+  splitCutoffTime: string | null;
 };
 type PaperStateResponse = {
   session: {
@@ -116,6 +119,9 @@ export default function HomePage() {
   const [mlObjective, setMlObjective] = useState<ObjectiveKey>("pnl");
   const [mlParamSpecs, setMlParamSpecs] = useState<StrategyParamSpec[]>([]);
   const [mlRanges, setMlRanges] = useState<Record<string, MlRange>>({});
+  const [mlSplitPct, setMlSplitPct] = useState<number>(70);
+  const [mlTotalBars, setMlTotalBars] = useState<number | null>(null);
+  const [mlSplitCutoffTime, setMlSplitCutoffTime] = useState<string | null>(null);
   const [paperSession, setPaperSession] = useState<string>("");
   const [paperError, setPaperError] = useState<string>("");
   const [paperState, setPaperState] = useState<PaperStateResponse | null>(null);
@@ -195,6 +201,9 @@ export default function HomePage() {
     const mlCached = mlByStrategy[selectedPath];
     setMlBestResult(mlCached?.bestRun || null);
     setMlBestParams(mlCached?.bestParams || null);
+    setMlSplitPct(mlCached?.splitPct ?? 70);
+    setMlTotalBars(mlCached?.totalBars ?? null);
+    setMlSplitCutoffTime(mlCached?.splitCutoffTime ?? null);
     setOptuna(mlCached?.resultText || "");
     setMlError(mlCached?.error || "");
     setMlRanges(mlCached?.ranges || {});
@@ -295,6 +304,8 @@ export default function HomePage() {
 
   const activeName = selectedPath || "Select strategy";
   const activeFileName = selectedPath ? selectedPath.split("/").pop() || selectedPath : "no_strategy.py";
+  const mlTrainBars = mlTotalBars && mlTotalBars > 0 ? Math.floor((mlTotalBars - 1) * (mlSplitPct / 100)) + 1 : null;
+  const mlOosBars = mlTotalBars && mlTrainBars !== null ? mlTotalBars - mlTrainBars : null;
 
   async function saveStrategy() {
     if (!selectedPath) return;
@@ -324,6 +335,9 @@ export default function HomePage() {
           error: "",
           ranges: resetRanges,
           bestParams: null,
+          splitPct: mlSplitPct,
+          totalBars: null,
+          splitCutoffTime: null,
         },
       }));
       setBacktestByStrategy((prev) => {
@@ -467,6 +481,9 @@ export default function HomePage() {
           error: "No numeric params found in strategy `params`.",
           ranges: mlRanges,
           bestParams: mlBestParams,
+          splitPct: mlSplitPct,
+          totalBars: mlTotalBars,
+          splitCutoffTime: mlSplitCutoffTime,
         },
       }));
       return;
@@ -480,6 +497,11 @@ export default function HomePage() {
       const res = await apiPost<{
         best_value: number;
         best_params: Record<string, number>;
+        total_bars: number;
+        train_bars: number;
+        oos_bars: number;
+        split_pct: number;
+        train_end_time: string;
       }>("/optimize/run", {
         strategy_path: selectedPath,
         symbol,
@@ -489,11 +511,14 @@ export default function HomePage() {
         n_trials: mlTrials,
         seed: mlSeed,
         objective: mlObjective,
+        split_pct: mlSplitPct,
         ranges: rangesPayload,
       });
       const resultText = JSON.stringify(res, null, 2);
       setOptuna(resultText);
       setMlBestParams(res.best_params || null);
+      setMlTotalBars(Number.isFinite(res.total_bars) ? Number(res.total_bars) : null);
+      setMlSplitCutoffTime(typeof res.train_end_time === "string" ? res.train_end_time : null);
 
       const bestRun = await apiPost<BacktestResult>("/backtests/run", {
         strategy_path: selectedPath,
@@ -515,6 +540,9 @@ export default function HomePage() {
           error: "",
           ranges: mlRanges,
           bestParams: res.best_params || null,
+          splitPct: mlSplitPct,
+          totalBars: Number.isFinite(res.total_bars) ? Number(res.total_bars) : null,
+          splitCutoffTime: typeof res.train_end_time === "string" ? res.train_end_time : null,
         },
       }));
     } catch (err) {
@@ -528,6 +556,9 @@ export default function HomePage() {
           error: msg,
           ranges: mlRanges,
           bestParams: mlBestParams,
+          splitPct: mlSplitPct,
+          totalBars: mlTotalBars,
+          splitCutoffTime: mlSplitCutoffTime,
         },
       }));
     } finally {
@@ -694,6 +725,28 @@ export default function HomePage() {
               paramSpecs={mlParamSpecs}
               paramRanges={mlRanges}
               optimizedParams={mlBestParams}
+              splitPct={mlSplitPct}
+              trainBars={mlTrainBars}
+              oosBars={mlOosBars}
+              cutoffTimestamp={mlSplitCutoffTime}
+              onSplitPctChange={(nextPct) => {
+                const clamped = Math.max(1, Math.min(99, Math.round(nextPct)));
+                setMlSplitPct(clamped);
+                if (!selectedPath) return;
+                setMlByStrategy((cache) => ({
+                  ...cache,
+                  [selectedPath]: {
+                    resultText: cache[selectedPath]?.resultText || optuna,
+                    bestRun: cache[selectedPath]?.bestRun || mlBestResult,
+                    error: cache[selectedPath]?.error || mlError,
+                    ranges: cache[selectedPath]?.ranges || mlRanges,
+                    bestParams: cache[selectedPath]?.bestParams || mlBestParams,
+                    splitPct: clamped,
+                    totalBars: cache[selectedPath]?.totalBars ?? mlTotalBars,
+                    splitCutoffTime: null,
+                  },
+                }));
+              }}
               onParamRangeChange={(name, field, value) => {
                 if (!selectedPath) return;
                 setMlRanges((prev) => {
@@ -719,6 +772,9 @@ export default function HomePage() {
                       error: cache[selectedPath]?.error || mlError,
                       ranges: next,
                       bestParams: cache[selectedPath]?.bestParams || mlBestParams,
+                      splitPct: cache[selectedPath]?.splitPct ?? mlSplitPct,
+                      totalBars: cache[selectedPath]?.totalBars ?? mlTotalBars,
+                      splitCutoffTime: cache[selectedPath]?.splitCutoffTime ?? mlSplitCutoffTime,
                     },
                   }));
                   return next;

@@ -62,6 +62,7 @@ class OptimizeRequest(BaseModel):
     dataset_path: str | None = None
     objective: str = "pnl"
     seed: int | None = None
+    split_pct: float = 70.0
     ranges: dict[str, dict[str, float]] | None = None
 
 
